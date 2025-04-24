@@ -1,0 +1,414 @@
+1. Code for T test：
+setwd("D:\\Documents for R")
+library(openxlsx)
+Prospective<-read.xlsx("Prospective study-T test.xlsx")
+rownames(Prospective)<-Prospective$ID
+Prospective<-Prospective[,c(1:3,5:2927)]
+pMiss <- function(x){round(sum(is.na(x))/length(x),3)}
+Prospective_t<-as.data.frame(t(Prospective))
+Prospective_t$pmiss<-apply(Prospective_t, 1, pMiss)
+Prospective_t<-Prospective_t[which(Prospective_t$pmiss<0.2),]
+Prospective_t<-Prospective_t[,1:514]
+Prospective_2<-as.data.frame(t(Prospective_t))
+str(Prospective_2)
+Prospective_2<-as.data.frame(apply(Prospective_2[,1:2911],2,as.numeric))
+str(Prospective_2)
+Prospective_2<-Prospective_2[order(Prospective_2[,'group'],Prospective_2[,'nubmer.for.match']),]
+Prospective_3<-Prospective_2[,4:2911]
+TTEST<-as.data.frame(t(Prospective_3))[,-c(1:514)]
+TTEST$pvalue=apply(Prospective_3,2,function(x) t.test(x[1:257],x[258:514],paired = T)$p.value)
+for (i in 1:2908) {
+TTEST$delta_NPX[i]<-mean(Prospective_3[258:514,i],na.rm=TRUE)-mean(Prospective_3[1:257,i],na.rm=TRUE)
+}
+TTEST$proteinID<-rownames(TTEST)
+TTEST<-TTEST[order(TTEST$pvalue,decreasing = T),]
+TTEST$padj<-p.adjust(TTEST$pvalue,method = p.adjust.methods,n=length(TTEST$pvalue))
+TTEST$P_FDR=p.adjust(TTEST$pvalue,method = "fdr")
+TTEST$P_bonferroni=p.adjust(TTEST$pvalue,method = "bonferroni")
+write.csv(TTEST, Prospective -T test.csv')
+
+
+2. Code for GO and KEGG analysis
+setwd("D:\\Documents for R")
+#if (!require("BiocManager",quietly=TRUE))
+  #install.packages("BiocManager")
+#BiocManager::install("clusterProfiler")
+#BiocManager::install("org.Hs.eg.db")
+library(clusterProfiler)
+library(org.Hs.eg.db)
+library(ggplot2)
+setwd("D:\\Documents for R")
+library(openxlsx)
+upGene<-read.xlsx("Cross.xlsx")
+Genes<-bitr(geneID = upGene$SYMBOL,
+            fromType="SYMBOL", 
+            toType=c("ENTREZID"), 
+            OrgDb=org.Hs.eg.db) 
+GO<-enrichGO(gene=Genes$ENTREZID,
+              OrgDb=org.Hs.eg.db,
+              keyType="ENTREZID",
+              ont="all",
+              pAdjustMethod="BH",
+              pvalueCutoff=1,
+              qvalueCutoff=1,
+              minGSSize=5,
+              maxGSSize=5000,
+              readable=TRUE)
+write.table(data.frame(ID=row.names(GO@result),GO@result),
+            file="GO_entrich_result.csv",
+            sep="D:\\Documents for R",
+            quote=F,
+            row.names=F,
+            col.names=T)
+pdf(file="GO Bar diagram.pdf",width =10,height=8)
+barplot(GO,drop=TRUE,
+        showCategory=6,split="ONTOLOGY")+
+  facet_grid(ONTOLOGY~.,scale='free')
+dev.off()
+head(GO@result)
+pdf(file="GO scatter diagram.pdf",width =10,height=8)
+dotplot(GO,showCategory=6,split="ONTOLOGY")+
+  facet_grid(ONTOLOGY~.,scale='free') 
+dotplot(
+  GO,
+  x="GeneRatio",
+  color="p.adjust",
+  showCategory=15,
+  size=NULL,
+  split=NULL,
+  font.size=12,
+  title="",
+  orderBy="x",
+  label_format=30) 
+KEGG<-enrichKEGG(gene=Genes$ENTREZID,
+                 organism = 'hsa',
+                 keyType = "kegg",
+                 pAdjustMethod = "BH",
+                 pvalueCutoff=1,
+                 qvalueCutoff=1)
+
+pdf(file="KEGG Bar diagram.pdf",width =10,height=8)
+barplot(KEGG,
+        x="GeneRatio",
+        color="p.adjust",
+        showCategory=15,
+        title="KEGG_enrichment")#标题
+
+pdf(file="KEGG scatter diagram.pdf",width =10,height=8)
+dotplot(KEGG)
+View(as.data.frame(KEGG)) 
+browseKEGG(KEGG,"hsa04115") 
+KEGG_results<-DOSE::setReadable(KEGG,
+                                OrgDb=org.Hs.eg.db,
+                               keyType = "ENTREZID")
+write.table(data.frame(ID=row.names(KEGG_results@result),KEGG_results@result),
+            file="KEGG_entrich_result.csv",
+            sep="D:\\Documents for R",
+            quote=F,
+            row.names=F,
+            col.names=T)
+
+
+3. Code for training data and testing data
+setwd("D:\\Documents for R")
+library(openxlsx)
+prospective <-read.xlsx("train_data.xlsx")
+set.seed(2021)
+train_index <-sample(1:nrow(prospective),nrow(prospective)*0.7) 
+train_data <- prospective [train_index,]
+write.csv(train_data,'train_data.csv')
+test_data <- prospective [-train_index,]
+write.csv(test_data,'test_data.csv')
+
+
+4. Code for machine learning
+4.1 LR- train_data
+setwd("D:\\Documents for R")
+install.packages(c("e1071", "pROC", "openxlsx"))
+library(e1071)
+library(pROC)
+library(openxlsx)
+mydata <- read.xlsx("train_data.xlsx")
+y <- as.factor(mydata[, 1])
+x <- mydata[, 2:10]
+logistic_model <- glm(UC ~ ., data = mydata, family = binomial())
+logistic_predictions <- predict(logistic_model, x, type = "response")
+logistic_roc <- roc(y, logistic_predictions)
+plot(logistic_roc, col = "red", main = "ROC Curve for Logistic Regression Model")
+logistic_auc <- auc(logistic_roc)
+legend("bottomright", legend = paste("AUC =", round(logistic_auc, 2)), col = "red", lwd = 2)
+setwd("D:\\Documents for R")
+install.packages(c("rpart", "randomForest", "pROC", "openxlsx", "car"))
+library(rpart)
+library(randomForest)
+library(pROC)
+library(openxlsx)
+library(car)
+train_data <- read.xlsx("train_data.xlsx")
+test_data <- read.xlsx("test_data.xlsx")
+train_y <- as.factor(train_data[, 1])
+train_x <- train_data[, 2:10]
+test_y <- as.factor(test_data[, 1])
+test_x <- test_data[, 2:10]
+train_x <- scale(train_x)
+test_x <- scale(test_x)
+logistic_model <- glm(train_y ~ ., data = data.frame(train_y, train_x), family = binomial())
+vif(logistic_model)
+logistic_predictions <- predict(logistic_model, data.frame(test_x), type = "response")
+logistic_roc <- roc(test_y, logistic_predictions)
+plot(logistic_roc, col = "blue", main = "ROC Curve for Logistic Regression Model")
+logistic_auc <- auc(logistic_roc)
+legend("bottomright", legend = paste("AUC =", round(logistic_auc, 2)), col = "blue", lwd = 2)
+
+4.2 DT- train_data
+setwd("D:\\Documents for R")
+install.packages(c("rpart", "randomForest", "pROC", "openxlsx"))
+library(rpart)
+library(randomForest)
+library(pROC)
+library(openxlsx)
+mydata <- read.xlsx("train_data.xlsx")
+y <- as.factor(mydata[, 1])
+x <- mydata[, 2:10]
+tree_model <- rpart(UC ~ ., data = mydata, method = "class")
+tree_predictions <- predict(tree_model, x, type = "prob")[,2]
+tree_roc <- roc(y, tree_predictions)
+
+plot(tree_roc, col = "red", main = "ROC Curve for Decision Tree Model")
+tree_auc <- auc(tree_roc)
+legend("bottomright", legend = paste("AUC =", round(tree_auc, 2)), col = "red", lwd = 2)
+
+
+4.3 SVM-train_data
+setwd("D:\\Documents for R")
+install.packages(c("e1071", "pROC", "openxlsx"))
+library(e1071)
+library(pROC)
+library(openxlsx)
+mydata <- read.xlsx("train_data.xlsx")
+y <- as.factor(mydata[, 1])
+x <- mydata[, 2:10]
+svm_model <- svm(x, y, probability = TRUE)
+svm_predictions <- predict(svm_model, x, probability = TRUE)
+svm_probabilities <- attr(svm_predictions, "probabilities")[,2]
+svm_roc <- roc(y, svm_probabilities)
+plot(svm_roc, col = "red", main = "ROC Curve for SVM Model")
+svm_auc <- auc(svm_roc)
+legend("bottomright", legend = paste("AUC =", round(svm_auc, 2)), col = "red", lwd = 2)
+
+
+4.4 LR- test data
+setwd("D:\\Documents for R")
+install.packages(c("rpart", "randomForest", "pROC", "openxlsx", "car"))
+library(rpart)
+library(randomForest)
+library(pROC)
+library(openxlsx)
+library(car)
+train_data <- read.xlsx("train_data.xlsx")
+test_data <- read.xlsx("test_data.xlsx")
+train_y <- as.factor(train_data[, 1])
+train_x <- train_data[, 2:10]
+test_y <- as.factor(test_data[, 1])
+test_x <- test_data[, 2:10]
+train_x <- scale(train_x)
+test_x <- scale(test_x)
+logistic_model <- glm(train_y ~ ., data = data.frame(train_y, train_x), family = binomial())
+vif(logistic_model)
+logistic_predictions <- predict(logistic_model, data.frame(test_x), type = "response")
+logistic_roc <- roc(test_y, logistic_predictions)
+plot(logistic_roc, col = "blue", main = "ROC Curve for Logistic Regression Model")
+logistic_auc <- auc(logistic_roc)
+legend("bottomright", legend = paste("AUC =", round(logistic_auc, 2)), col = "blue", lwd = 2)
+
+
+4.5 SVM- test data
+setwd("D:\\Documents for R")
+install.packages(c("e1071", "pROC", "openxlsx"))
+library(e1071)
+library(pROC)
+library(openxlsx)
+train_data <- read.xlsx("train_data.xlsx")
+test_data <- read.xlsx("test_data.xlsx")
+train_y <- as.factor(train_data[, 1])
+train_x <- train_data[, 2:10]
+test_y <- as.factor(test_data[, 1])
+test_x <- test_data[, 2:10]
+train_x <- scale(train_x)
+test_x <- scale(test_x)
+svm_model <- svm(train_x, train_y, probability = TRUE)
+svm_predictions <- predict(svm_model, test_x, probability = TRUE)
+svm_probabilities <- attr(svm_predictions, "probabilities")[,2]
+svm_roc <- roc(test_y, svm_probabilities)
+plot(svm_roc, col = "blue", main = "ROC Curve for SVM Model")
+svm_auc <- auc(svm_roc)
+legend("bottomright", legend = paste("AUC =", round(svm_auc, 2)), col = "blue", lwd = 2)
+
+
+4.6 DT- test data
+setwd("D:\\Documents for R")
+install.packages(c("rpart", "randomForest", "pROC", "openxlsx", "e1071"))
+library(rpart)
+library(randomForest)
+library(pROC)
+library(openxlsx)
+library(e1071)
+train_data <- read.xlsx("train_data.xlsx")
+test_data <- read.xlsx("test_data.xlsx")
+train_y <- as.factor(train_data[, 1])
+train_x <- train_data[, 2:10]
+test_y <- as.factor(test_data[, 1])
+test_x <- test_data[, 2:10]
+train_x <- scale(train_x)
+test_x <- scale(test_x)
+tree_model <- rpart(train_y ~ ., data = data.frame(train_y, train_x), method = "class")
+tree_predictions <- predict(tree_model, data.frame(test_x), type = "prob")[,2]
+tree_roc <- roc(test_y, tree_predictions)
+plot(tree_roc, col = "blue", main = "ROC Curve for Decision Tree Model")
+tree_auc <- auc(tree_roc)
+legend("bottomright", legend = paste("AUC =", round(tree_auc, 2)), col = "blue", lwd = 2)
+
+
+5 LR model
+setwd("D:\\Documents for R")
+if (!require("VIM",quietly = TRUE)){
+  install.packages("VIM")
+}
+if (!require("rms",quietly = TRUE)){
+  install.packages("rms")
+}
+if(!require("nomogramFormula",quietly = TRUE)){
+install.packages("nomogramFormula")
+}
+if(!require("pROC",quietly = TRUE)){
+install.packages("pROC")
+}
+if (!require("rmda",quietly = TRUE)){
+
+install.packages("rmda")
+}
+library(VIM)
+library(rms)
+library(nomogramFormula)
+library(pROC)
+library(rmda)
+library(openxlsx)
+mydata <-read.xlsx("train_data.xlsx")
+mydata_copy <-mydata 
+dd=datadist(mydata)
+option <- options(datadist="dd")
+colnames(mydata)
+formula <-as.formula(UC~Age+Sex+IL2RA+TNF+TGFA+CCL20+CXCL9+IGFBP2+CKB)
+model <- lrm(formula, 
+             data=mydata_copy, 
+             x=TRUE, 
+             y=TRUE) 
+model 
+
+OR <- exp(model$coefficients) 
+OR
+
+Nomogram_1 <- nomogram(model,
+                       fun = function(x)1/(1+exp(-x)),
+                       lp=F,
+                       funlabel="Risk")
+
+plot(Nomogram_1)
+plot(Nomogram_1,
+     xfrac=.25,
+     tcl=-0.5,
+     lmgp=0.3,
+     label.every=1,
+     col.grid=gray(c(0.8,0.95)))
+
+Nomogram_3
+if (!require("regplot",quietly = TRUE)){
+install.packages("regplot")
+}
+Nomogra_2<-glm(formula,family = binomial(link=logit),data=mydata)
+library(regplot)
+nom2.1m<-regplot (Nomogra_2,
+                  plots = c("density","boxes"),
+                  observation=mydata[1,],
+                  center=TRUE,
+                  points=TRUE,
+                  droplines=FALSE,
+                  title="Nomogram",
+                  odds=FALSE,
+                  interval="confidence",
+                  rank=NULL,
+                  clickable=FALSE,
+                  dencol="skyblue",
+                  boxcol="skyblue"
+)
+nom2.1m
+options(option)
+results <- formula_rd(nomogram = Nomogram_1)
+mydata$points<-points_cal(formula = results$formula,rd=mydata)
+mydata
+head(mydata)
+
+6. Evaluation of nomogram prediction model
+model_ROC <-glm(formula,data = mydata,family = binomial())
+mydata$predvalue<-predict(model_ROC,type="response")
+head(mydata)
+ROC <- roc(mydata$UC,mydata$predvalue)
+auc(ROC)
+ci(auc(ROC))
+par(mar = c(4, 4, 1, 1))
+plot(1-ROC$specificities,
+     ROC$sensitivities,type="l",
+     col="red",
+     lty=1,
+     xlab="1-Specificity",
+     ylab="Sensitivity",
+     lwd=2)
+abline(0,1)
+legend("bottomright",
+       c("AUC of Nomogram: 0.72 (95%CI 0.66-0.79)"),
+       lty=c(1),
+       lwd=2,
+       col="red",
+       bty="0")
+legend("bottomright",legend = c("Nomogram: 0.72 (95%CI 0.66-0.79)",
+       col=c("red" ,"blue"),
+       lty=1,
+       lwd=2)
+
+
+
+cal <- calibrate(model,method = "boot",B=1000)
+par(mar = c(4, 4, 1, 1))
+plot(cal,
+     xlim=c(0.3,1),
+     ylim=c(0,1),
+     xlab="Predicted Probability",
+     ylab="Observed Probability",
+     subtiles=FALSE)
+
+
+model_DCA <-decision_curve(formula,
+                           data=mydata_copy,
+                           family = binomial(link='logit'),
+                           thresholds = seq(0,1,by=0.01),
+                           confidence.intervals = 0.95,
+                           study.design = 'case-control',
+                           population.prevalence = 0.3)
+
+par(mar = c(4, 4, 1, 1))
+plot_decision_curve(model_DCA,
+                    curve.names = c('Nomogram'),
+                    xlim = c(0,1.0),
+                    cost.benefit.axis = FALSE,
+                    col = c('red'),
+                    confidence.intervals = FALSE,
+                    standardize = FALSE)
+
+
+par(mar = c(4, 4, 1, 1))
+plot_clinical_impact(model_DCA,
+                     population.size = 1000,
+                     cost.benefit.axis = T,
+                     n.cost.benefits = 8,
+                     col = c('red','blue'),
+                     confidence.intervals = F)
